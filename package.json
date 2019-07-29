@@ -1,0 +1,28 @@
+{
+  "name": "mo-requirejs",
+  "version": "1.0.0",
+  "description": "自己实现一个requirejs",
+  "main": "build/index.js",
+  "directories": {
+    "example": "example"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "rollup -c"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Unique111/mo-requirejs.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Unique111/mo-requirejs/issues"
+  },
+  "homepage": "https://github.com/Unique111/mo-requirejs#readme",
+  "devDependencies": {
+    "@babel/core": "^7.5.5",
+    "rollup": "^1.17.0",
+    "rollup-plugin-babel": "^4.3.3"
+  }
+}
