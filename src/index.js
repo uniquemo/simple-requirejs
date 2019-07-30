@@ -1,17 +1,21 @@
 let modId = 0         // 模块ID
+let taskId = 0
 const modules = {}
+const tasks = {}
+const mapDepToModuleOrTask = {}
 
 const MSTATUS = {
-  INITED: 'INITED',        // 初始化完成
-  FETCHING: 'FETCHING',    // 正在网络请求
-  FETCHED: 'FETCHED',      // 网络请求结束(此状态暂时用不到)
-  EXECUTING: 'EXECUTING',  // 准备开始运算模块
-  EXECUTED: 'EXECUTED',    // 模块运算完毕
-  ERROR: 'ERROR'           // 模块发生错误
+  INITED: 'INITED',
+  FETCHING: 'FETCHING',
+  FETCHED: 'FETCHED',
+  EXECUTING: 'EXECUTING',
+  EXECUTED: 'EXECUTED',
+  ERROR: 'ERROR'
 }
 
 class Module {
   constructor(name, deps, onSucceed, onError) {
+    if (!name) return   // 用于区分task
     this.modId = ++modId
     this.init(name, deps, onSucceed, onError)
     this.fetch()
@@ -62,7 +66,13 @@ class Module {
         set(newStatus) {
           status = newStatus
           if (newStatus === MSTATUS.EXECUTED) {
-            // TODO 依赖该模块的模块的dependency数量减1
+            let depModules = mapDepToModuleOrTask[this.name]
+            if (!depModules) return
+            depModules.forEach((mod) => {
+              setTimeout(() => {
+                mod.depCount--
+              })
+            })
           }
         }
       })
@@ -71,23 +81,104 @@ class Module {
     }
   }
 
-  // TODO 依赖执行完再执行callback
   analyzeDeps() {
-    if (!this.loadedDepCount) {
+    let depCount = this.deps ? this.deps.length : 0
 
+    console.log('depCount => ', depCount)
+
+    // // 处理dep中包含'require'的特殊情况
+    // let requireInDep = (this.dep || []).indexOf('require')
+    // if (requireInDep !== -1) {
+    //   depCount--
+    //   this.requireInDep = requireInDep
+    //   this.dep.splice(requireInDep, 1)
+    // }
+
+    // // 处理循环依赖情况
+    // let cycleArray = this.checkCycle()
+    // if (cycleArray) {
+    //   depCount = depCount - cycleArray.length
+    // }
+
+    if (depCount === 0) {
+      this.execute()
+      return
     }
-    if (this.deps && this.deps.length) {
-      this.deps.forEach(function(dep) {
-        const mod = new Module(dep)
-      })
+
+    this.depCount = depCount
+    if (!this.depCount) return
+
+    Object.defineProperty(this, 'depCount', {
+      get() {
+        return depCount
+      },
+      set(newDepCount) {
+        depCount = newDepCount
+        if (newDepCount === 0) {
+          if (this.modId) {
+            console.log(`模块${this.name}的依赖已经全部准备好`)
+          } else if (this.taskId) {
+            console.log(`任务${this.taskId}的依赖已经全部准备好`)
+          }
+          this.execute()
+        }
+      }
+    })
+
+    this.deps.forEach((depModuleName) => {
+      if (!modules[depModuleName]) {
+        const mod = new Module(depModuleName)
+        modules[mod.name] = mod
+      }
+
+      if (!mapDepToModuleOrTask[depModuleName]) {
+        mapDepToModuleOrTask[depModuleName] = []
+      }
+
+      mapDepToModuleOrTask[depModuleName].push(this)
+    })
+  }
+
+  execute() {
+    this.statusHook(MSTATUS.EXECUTING);
+    // 根据依赖数组向依赖模块收集exports当做参数
+    let arg = (this.deps || []).map((dep) => {
+      return modules[dep].exports
+    })
+
+    // 插入require到回调函数的参数列表中
+    // if (this.requireInDep !== -1 && this.requireInDep !== undefined) {
+    //   arg.splice(this.requireInDep, 0, require)
+    // }
+
+    this.exports = this.onSucceed.apply(this, arg)
+    if (this.taskId) {
+      console.log(`任务${this.taskId}执行完成`)
+    } else if (this.modId) {
+      console.log(`模块${this.name}执行完成`)
     }
+    this.statusHook(MSTATUS.EXECUTED)
+  }
+}
+
+class Task extends Module {
+  constructor(deps, onSucceed, onError) {
+    super(undefined, deps, onSucceed, onError)
+    this.taskId = ++taskId
+    this.init(deps, onSucceed, onError)
+  }
+
+  init(deps, onSucceed, onError) {
+    this.deps = deps
+    this.onSucceed = onSucceed
+    this.onError = onError
+    tasks[this.taskId] = this
   }
 }
 
 const utils = {
   getEntryName: function() {
     const entry = document.currentScript.getAttribute('data-main')
-    console.log('entry => ', entry)
     return utils.modulePathToModuleName(entry)
   },
   moduleNameToModulePath: function(name) {
@@ -131,15 +222,33 @@ const define = function(name, deps, onSucceed, onError) {
   } else if (utils.isString(name) && Array.isArray(deps) && utils.isFunction(onSucceed)) {
   }
 
-  const mod = new Module(name, deps, onSucceed, onError)
+  let mod = modules[name]
+  if (!mod) {
+    mod = new Module(name, deps, onSucceed, onError)
+  } else {
+    // 这里需要重新赋值，因为一开始入口文件的依赖模块新建时，并不知道该依赖模块的回调函数及其自身所依赖的模块
+    mod.name = name
+    mod.deps = deps
+    mod.onSucceed = onSucceed
+    mod.onError = onError
+  }
   mod.analyzeDeps()
 }
-const require = function(deps, onSucceed, onError) {}
+
+const require = function(deps, onSucceed, onError) {
+  if (utils.isFunction(deps)) {
+    onSucceed = deps
+    deps = undefined
+  }
+
+  const task = new Task(deps, onSucceed, onError)
+  task.analyzeDeps()
+}
 
 window.define = define
 window.require = require
 
 const entryModule = new Module(utils.getEntryName())
-modules[entryModule.modId] = entryModule
-console.log('entryModule => ', entryModule)
+modules[entryModule.name] = entryModule
 console.log('modules => ', modules)
+console.log('tasks => ', tasks)
