@@ -2,23 +2,25 @@ let modId = 0         // 模块ID
 let taskId = 0
 const modules = {}
 const tasks = {}
-const mapDepToModuleOrTask = {}
 
-const MSTATUS = {
-  INITED: 'INITED',
-  FETCHING: 'FETCHING',
-  FETCHED: 'FETCHED',
-  EXECUTING: 'EXECUTING',
-  EXECUTED: 'EXECUTED',
-  ERROR: 'ERROR'
-}
+// { 模块id: 依赖该模块的模块列表 }，用于方便操作当模块加载完成后，处理依赖该模块的相应模块。
+const mapDepToModuleOrTask = {}
 
 class Module {
   constructor(name, deps, onSucceed, onError) {
-    if (!name) return   // 用于区分task
+    if (name === 'TASK') return   // 用于区分task
     this.modId = ++modId
     this.init(name, deps, onSucceed, onError)
     this.fetch()
+  }
+
+  static MSTATUS = {
+    INITED: 'INITED',
+    FETCHING: 'FETCHING',
+    FETCHED: 'FETCHED',
+    EXECUTING: 'EXECUTING',
+    EXECUTED: 'EXECUTED',
+    ERROR: 'ERROR'
   }
 
   init(name, deps, onSucceed, onError) {
@@ -27,7 +29,7 @@ class Module {
     this.deps = deps
     this.onSucceed = onSucceed
     this.onError = onError
-    this.statusHook(MSTATUS.INITED)
+    this.statusHook(Module.MSTATUS.INITED)
   }
 
   fetch() {
@@ -39,16 +41,16 @@ class Module {
 
     const head = document.getElementsByTagName('head')[0]
     head.appendChild(node)
-    this.statusHook(MSTATUS.FETCHING)
+    this.statusHook(Module.MSTATUS.FETCHING)
   }
 
   fetchSucceed() {
-    this.onSucceed && this.onSucceed()
-    this.statusHook(MSTATUS.FETCHED)
+    this.statusHook(Module.MSTATUS.FETCHED)
   }
 
   fetchFailed() {
-    this.statusHook(MSTATUS.ERROR)
+    this.statusHook(Module.MSTATUS.ERROR)
+
     if (this.onError) {
       this.onError()
     } else {
@@ -65,7 +67,7 @@ class Module {
         },
         set(newStatus) {
           status = newStatus
-          if (newStatus === MSTATUS.EXECUTED) {
+          if (newStatus === Module.MSTATUS.EXECUTED) {
             let depModules = mapDepToModuleOrTask[this.name]
             if (!depModules) return
             depModules.forEach((mod) => {
@@ -81,24 +83,35 @@ class Module {
     }
   }
 
+  checkCycleDeps() {
+    const cycleDeps = []
+
+    for (let depModuleName of (this.deps || [])) {
+      const modDependedBy = mapDepToModuleOrTask[this.name]
+      if (modDependedBy && modDependedBy.indexOf(modules[depModuleName]) !== -1) {
+        cycleDeps.push(depModuleName)
+      }
+    }
+
+    return cycleDeps.length ? cycleDeps : undefined
+  }
+
   analyzeDeps() {
     let depCount = this.deps ? this.deps.length : 0
 
-    console.log('depCount => ', depCount)
+    // 处理deps中包含'require'的特殊情况
+    const requireInDepIdx = (this.deps || []).indexOf('require')
+    if (requireInDepIdx !== -1) {
+      depCount--
+      this.requireInDepIdx = requireInDepIdx
+      this.deps.splice(requireInDepIdx, 1)
+    }
 
-    // // 处理dep中包含'require'的特殊情况
-    // let requireInDep = (this.dep || []).indexOf('require')
-    // if (requireInDep !== -1) {
-    //   depCount--
-    //   this.requireInDep = requireInDep
-    //   this.dep.splice(requireInDep, 1)
-    // }
-
-    // // 处理循环依赖情况
-    // let cycleArray = this.checkCycle()
-    // if (cycleArray) {
-    //   depCount = depCount - cycleArray.length
-    // }
+    // 处理循环依赖情况
+    const cycleDeps = this.checkCycleDeps()
+    if (cycleDeps) {
+      depCount = depCount - cycleDeps.length
+    }
 
     if (depCount === 0) {
       this.execute()
@@ -116,9 +129,9 @@ class Module {
         depCount = newDepCount
         if (newDepCount === 0) {
           if (this.modId) {
-            console.log(`模块${this.name}的依赖已经全部准备好`)
+            console.log(`模块 ${this.name} 的依赖已经全部准备好`)
           } else if (this.taskId) {
-            console.log(`任务${this.taskId}的依赖已经全部准备好`)
+            console.log(`任务 ${this.taskId} 的依赖已经全部准备好`)
           }
           this.execute()
         }
@@ -140,30 +153,32 @@ class Module {
   }
 
   execute() {
-    this.statusHook(MSTATUS.EXECUTING);
+    this.statusHook(Module.MSTATUS.EXECUTING)
+
     // 根据依赖数组向依赖模块收集exports当做参数
-    let arg = (this.deps || []).map((dep) => {
+    let args = (this.deps || []).map((dep) => {
       return modules[dep].exports
     })
 
     // 插入require到回调函数的参数列表中
-    // if (this.requireInDep !== -1 && this.requireInDep !== undefined) {
-    //   arg.splice(this.requireInDep, 0, require)
-    // }
-
-    this.exports = this.onSucceed.apply(this, arg)
-    if (this.taskId) {
-      console.log(`任务${this.taskId}执行完成`)
-    } else if (this.modId) {
-      console.log(`模块${this.name}执行完成`)
+    if (this.requireInDepIdx !== -1 && this.requireInDepIdx !== undefined) {
+      args.splice(this.requireInDepIdx, 0, require)
     }
-    this.statusHook(MSTATUS.EXECUTED)
+
+    this.exports = this.onSucceed.apply(this, args)
+    this.statusHook(Module.MSTATUS.EXECUTED)
+
+    if (this.taskId) {
+      console.log(`任务 ${this.taskId} 执行完成`)
+    } else if (this.modId) {
+      console.log(`模块 ${this.name} 执行完成`)
+    }
   }
 }
 
 class Task extends Module {
   constructor(deps, onSucceed, onError) {
-    super(undefined, deps, onSucceed, onError)
+    super('TASK', deps, onSucceed, onError)
     this.taskId = ++taskId
     this.init(deps, onSucceed, onError)
   }
@@ -248,6 +263,7 @@ const require = function(deps, onSucceed, onError) {
 window.define = define
 window.require = require
 
+// 把入口模块添加到modules对象中
 const entryModule = new Module(utils.getEntryName())
 modules[entryModule.name] = entryModule
 console.log('modules => ', modules)
