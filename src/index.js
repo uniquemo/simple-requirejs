@@ -108,6 +108,8 @@ class Module {
     }
 
     // 处理循环依赖情况
+    // 现象：模块无法往下执行。
+    // 循环依赖的原因：卡住了，depCount值无法变为0，execute()无法被执行，所以得减小depCount的值。
     const cycleDeps = this.checkCycleDeps()
     if (cycleDeps) {
       depCount = depCount - cycleDeps.length
@@ -138,6 +140,10 @@ class Module {
       }
     })
 
+    // 这里，结合上面的checkCycleDeps()解决了循环依赖的问题。
+    // why?
+    // 因为如果前面已经加载的模块，就不再加载了，同时depCount的值也减去了相应的值(循环依赖模块的个数)，当没加载过的模块加载完毕后，
+    // depCount值变为0时，就会执行模块的回调函数。
     this.deps.forEach((depModuleName) => {
       if (!modules[depModuleName]) {
         const mod = new Module(depModuleName)
@@ -268,3 +274,4 @@ const entryModule = new Module(utils.getEntryName())
 modules[entryModule.name] = entryModule
 console.log('modules => ', modules)
 console.log('tasks => ', tasks)
+console.log('mapDepToModuleOrTask => ', mapDepToModuleOrTask)
