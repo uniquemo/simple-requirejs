@@ -1,4 +1,4 @@
-# mo-requirejs
+# simple-requirejs
 自己实现一个requirejs
 
 ## RequireJs Usage
